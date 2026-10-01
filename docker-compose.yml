@@ -1,0 +1,54 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-secret}@db:5432/${POSTGRES_DB:-sports_complex}
+      # Для боевого запуска ОБЯЗАТЕЛЬНО задайте свой JWT_SECRET (>= 32 символов) в .env
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-do-not-use-in-production-0123456789}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:8080}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sports_complex}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+    ports:
+      - "127.0.0.1:5432:5432"   # только с локальной машины
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Ежечасовое резервное копирование БД (требование ТЗ). Запуск: docker compose --profile backup up -d
+  backup:
+    image: postgres:16-alpine
+    profiles: ["backup"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-secret}
+    volumes:
+      - ./backups:/backups
+    entrypoint: >
+      sh -c 'while true; do
+      pg_dump -h db -U ${POSTGRES_USER:-postgres} ${POSTGRES_DB:-sports_complex} | gzip > /backups/sport_$$(date +%Y%m%d_%H%M%S).sql.gz;
+      ls -1t /backups/sport_*.sql.gz | tail -n +49 | xargs -r rm --;
+      sleep 3600; done'
+
+volumes:
+  pgdata:
